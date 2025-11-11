@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>影调分析工具｜Histogram Tone Analyzer</title>
+    <style>
+        :root{
+            --bg:#0f1115; --panel:#151821; --panel-2:#1a1f2b; --text:#e6e8ee; --muted:#9aa3b2;
+            --acc:#58a6ff; --acc-2:#8b5cf6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+            --grid:#2a3040; --handle:#f8fafc; --shadow:#94a3b8; --mid:#60a5fa; --hi:#fca5a5;
+        }
+        html,body{height:100%;}
+        body{margin:0;background:linear-gradient(180deg,#0e1117,#0c1018);color:var(--text);
+            font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        }
+        .wrap{max-width:1200px;margin:24px auto;padding:0 16px;}
+        .title{display:flex;gap:12px;align-items:center;}
+        .title h1{font-size:20px;margin:0;}
+        .panel{background:var(--panel);border:1px solid #232838;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.35);}
+        .row{display:grid;grid-template-columns: 1.2fr .9fr;gap:16px;margin-top:16px;}
+        @media (max-width: 960px){.row{grid-template-columns:1fr;}}
+
+        .uploader{padding:14px;border-radius:14px;border:1px dashed #2a3144;background:var(--panel-2);
+            display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap}
+        .u-left{display:flex;align-items:center;gap:12px;}
+        .drop{border:1px dashed #334155;border-radius:12px;padding:10px 14px;cursor:grab;}
+        .drop.drag{outline:2px dashed var(--acc);outline-offset:4px;background:#0b1220}
+        .actions{display:flex;gap:8px;align-items:center;}
+        .btn{background:#111827;border:1px solid #2b3348;color:var(--text);padding:10px 14px;border-radius:12px;cursor:pointer}
+        .btn:hover{border-color:#3f4b6a}
+        .pill{padding:6px 10px;border-radius:999px;border:1px solid #2b3348;background:#101625;color:var(--muted);font-size:12px}
+
+        .canvasWrap{padding:16px}
+        .canvasOuter{display:flex;align-items:stretch;gap:16px;}
+        .imgPanel,.histPanel{flex:1;background:#0f1422;border:1px solid #22283a;border-radius:14px;}
+        .imgPanel header,.histPanel header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #22283a;color:var(--muted)}
+        .cwrap{position:relative;padding:16px;}
+        canvas{display:block;max-width:100%;}
+        .meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:12px;border-top:1px solid #22283a;background:linear-gradient(180deg,#0a0f1a,#0e1422)}
+        .stat{background:#0a101b;border:1px solid #1f2434;padding:10px;border-radius:10px}
+        .stat h4{margin:0 0 8px 0;font-size:12px;color:var(--muted)}
+        .stat b{font-size:18px}
+
+        .legend{display:flex;gap:12px;align-items:center;padding:10px 14px;border-top:1px solid #22283a;color:var(--muted);flex-wrap:wrap}
+        .dot{width:10px;height:10px;border-radius:50%}
+        .dot.shadow{background:var(--shadow)}
+        .dot.mid{background:var(--mid)}
+        .dot.hi{background:var(--hi)}
+
+        .switches{display:flex;gap:8px;align-items:center}
+        .switch{display:inline-flex;gap:8px;align-items:center;padding:8px 10px;border-radius:10px;border:1px solid #2a3144;background:#0f1422;color:var(--muted);cursor:pointer}
+        .switch input{accent-color:var(--acc)}
+
+        .handleTip{position:absolute;top:4px;transform:translateX(-50%);padding:2px 6px;background:#0b1220;border:1px solid #2a2f42;border-radius:6px;color:#aab3c4;font-size:11px;pointer-events:none}
+
+        .toneTag{font-weight:600;padding:4px 8px;border-radius:8px;border:1px solid #2a3144;display:inline-block}
+        .tone-low{color:#a5b4fc;border-color:#475569}
+        .tone-mid{color:#67e8f9;border-color:#164e63}
+        .tone-high{color:#fecaca;border-color:#7f1d1d}
+
+        .footer{margin:18px 0 8px;color:#7a8497;font-size:12px;text-align:center}
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="title">
+        <h1>影调分析工具</h1>
+        <span class="pill">上传图片 → 生成直方图 → 拖拽阈值查看影调</span>
+    </div>
+
+    <div class="panel uploader" id="dropArea">
+        <div class="u-left">
+            <div>
+                <div style="font-weight:600">加载图片</div>
+                <div style="font-size:12px;color:var(--muted)">支持拖拽到此区域，或选择文件（JPG/PNG/WebP 等）</div>
+            </div>
+        </div>
+        <div class="actions">
+            <input type="file" accept="image/*" id="fileInput" style="display:none"/>
+            <button class="btn" id="pickBtn">选择文件</button>
+            <label class="switch"><input type="checkbox" id="rgbMode"> RGB 模式</label>
+            <label class="switch"><input type="checkbox" id="showZones" checked> 显示影调分区</label>
+            <label class="switch"><input type="checkbox" id="clipWarn" checked> 高光/暗部溢出提示</label>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="panel imgPanel">
+            <header>
+                <span>图片预览</span>
+                <span id="imgInfo" class="pill">未加载</span>
+            </header>
+            <div class="cwrap">
+                <canvas id="imgCanvas" width="800" height="520" style="background:#0b1220;border-radius:12px;border:1px solid #1f2536"></canvas>
+            </div>
+            <div class="meta">
+                <div class="stat"><h4>均值亮度</h4><b id="meanL">—</b></div>
+                <div class="stat"><h4>中位亮度</h4><b id="medianL">—</b></div>
+                <div class="stat"><h4>影调判断</h4><b id="toneJudge">—</b></div>
+            </div>
+        </div>
+
+        <div class="panel histPanel">
+            <header>
+                <span>亮度直方图（可拖拽两条阈值线）</span>
+                <span class="pill">左 = 暗部 / 右 = 高光</span>
+            </header>
+            <div class="cwrap" style="padding-bottom:6px">
+                <canvas id="histCanvas" width="800" height="260" style="background:#0b1220;border-radius:12px;border:1px solid #1f2536"></canvas>
+                <div id="hTipL" class="handleTip" style="display:none">-</div>
+                <div id="hTipR" class="handleTip" style="display:none">-</div>
+            </div>
+            <div class="legend">
+                <div style="display:flex;align-items:center;gap:8px"><span class="dot shadow"></span> 暗部 <b id="shadowPct">—</b></div>
+                <div style="display:flex;align-items:center;gap:8px"><span class="dot mid"></span> 中间调 <b id="midPct">—</b></div>
+                <div style="display:flex;align-items:center;gap:8px"><span class="dot hi"></span> 高光 <b id="highlightPct">—</b></div>
+                <div style="margin-left:auto">峰值计数 <span class="pill" id="peakCount">—</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">提示：拖拽直方图上的两条竖线可自定义暗部/高光阈值；支持切换 RGB 模式查看分通道直方图。</div>
+</div>
+
+<script>
+    // ======= DOM =======
+    const fileInput = document.getElementById('fileInput');
+    const pickBtn = document.getElementById('pickBtn');
+    const dropArea = document.getElementById('dropArea');
+    const imgCv = document.getElementById('imgCanvas');
+    const histCv = document.getElementById('histCanvas');
+    const imgCtx = imgCv.getContext('2d');
+    const histCtx = histCv.getContext('2d');
+
+    const infoEl = document.getElementById('imgInfo');
+    const meanEl = document.getElementById('meanL');
+    const medianEl = document.getElementById('medianL');
+    const judgeEl = document.getElementById('toneJudge');
+    const shadowPctEl = document.getElementById('shadowPct');
+    const midPctEl = document.getElementById('midPct');
+    const highlightPctEl = document.getElementById('highlightPct');
+    const peakCountEl = document.getElementById('peakCount');
+
+    const hTipL = document.getElementById('hTipL');
+    const hTipR = document.getElementById('hTipR');
+
+    const rgbMode = document.getElementById('rgbMode');
+    const showZones = document.getElementById('showZones');
+    const clipWarn = document.getElementById('clipWarn');
+
+    // ======= State =======
+    let imgBitmap = null;
+    let naturalW = 0, naturalH = 0;
+    let hist = new Array(256).fill(0); // luminance
+    let histR = new Array(256).fill(0), histG = new Array(256).fill(0), histB = new Array(256).fill(0);
+    let totalPx = 0;
+
+    // Draggable thresholds (0..255)
+    let tShadow = 64;
+    let tHighlight = 192;
+
+    let dragging = null; // 'L' | 'R' | null
+
+    // ======= Helpers =======
+    function clamp(v,min,max){return Math.min(max,Math.max(min,v));}
+    function fmtPct(v){return (v*100).toFixed(1)+'%'}
+
+    function computeHistogram(img){
+        // Downscale for speed if very large
+        const maxSide = 1400;
+        let w = img.width, h = img.height;
+        const scale = Math.min(1, maxSide / Math.max(w,h));
+        const off = new OffscreenCanvas(Math.max(1, Math.floor(w*scale)), Math.max(1, Math.floor(h*scale)));
+        const octx = off.getContext('2d', {willReadFrequently:true});
+        octx.drawImage(img, 0, 0, off.width, off.height);
+        const {data} = octx.getImageData(0,0,off.width,off.height);
+
+        hist.fill(0); histR.fill(0); histG.fill(0); histB.fill(0);
+        totalPx = off.width * off.height;
+
+        // Luminance using Rec.709 coefficients on gamma-encoded values
+        for(let i=0;i<data.length;i+=4){
+            const r=data[i], g=data[i+1], b=data[i+2];
+            const y = Math.round(0.2126*r + 0.7152*g + 0.0722*b);
+            hist[y]++;
+            histR[r]++; histG[g]++; histB[b]++;
+        }
+    }
+
+    function drawImageFit(){
+        if(!imgBitmap){imgCtx.clearRect(0,0,imgCv.width,imgCv.height);return}
+        const cw=imgCv.width,ch=imgCv.height; imgCtx.clearRect(0,0,cw,ch);
+        // letterbox
+        const scale = Math.min(cw / naturalW, ch / naturalH);
+        const dw = Math.round(naturalW * scale), dh = Math.round(naturalH * scale);
+        const dx = Math.round((cw-dw)/2), dy = Math.round((ch-dh)/2);
+        imgCtx.fillStyle = '#0b1220'; imgCtx.fillRect(0,0,cw,ch);
+        imgCtx.drawImage(imgBitmap, dx, dy, dw, dh);
+        // Optional: show clip warnings overlay
+        if(clipWarn.checked){
+            try{
+                const off = new OffscreenCanvas(dw, dh); const octx = off.getContext('2d');
+                octx.drawImage(imgBitmap,0,0,dw,dh); const {data} = octx.getImageData(0,0,dw,dh);
+                const mask = new ImageData(dw,dh);
+                for(let i=0;i<data.length;i+=4){
+                    const r=data[i],g=data[i+1],b=data[i+2];
+                    const y = 0.2126*r + 0.7152*g + 0.0722*b;
+                    const clipH = y>=252; const clipS = y<=3;
+                    // highlight = red, shadow = cyan
+                    mask.data[i+0] = clipH?255:0;
+                    mask.data[i+1] = (clipS?255:0);
+                    mask.data[i+2] = (clipS?255:0);
+                    mask.data[i+3] = (clipH||clipS)?140:0;
+                }
+                imgCtx.putImageData(mask, dx, dy);
+            }catch(e){/* OffscreenCanvas may not exist in some browsers */}
+        }
+    }
+
+    function analyzeAndRender(){
+        // Stats
+        let sum=0, peak=0, peakBin=0; let cumsum=0; let median=0;
+        for(let i=0;i<256;i++){const v=hist[i]; sum += v*i; if(v>peak){peak=v; peakBin=i};}
+        // median
+        const half = totalPx/2; for(let i=0;i<256;i++){cumsum+=hist[i]; if(cumsum>=half){median=i;break;}}
+        const mean = sum / (totalPx||1);
+        meanEl.textContent = mean.toFixed(1) + ' / 255';
+        medianEl.textContent = median + ' / 255';
+        peakCountEl.textContent = `${peak} @ ${peakBin}`;
+
+        // Zone splits
+        const sCount = hist.slice(0, tShadow+1).reduce((a,b)=>a+b,0);
+        const mCount = hist.slice(tShadow+1, tHighlight+1).reduce((a,b)=>a+b,0);
+        const hCount = hist.slice(tHighlight+1).reduce((a,b)=>a+b,0);
+        const sPct = sCount/(totalPx||1), mPct = mCount/(totalPx||1), hPct = hCount/(totalPx||1);
+        shadowPctEl.textContent = fmtPct(sPct);
+        midPctEl.textContent = fmtPct(mPct);
+        highlightPctEl.textContent = fmtPct(hPct);
+
+        // Tone judgement heuristic
+        let tag = ''; let cls='tone-mid';
+        if(hPct>0.35 && mean>150) {tag='高调倾向'; cls='tone-high'}
+        else if(sPct>0.35 && mean<105) {tag='低调倾向'; cls='tone-low'}
+        else {tag='中性/广域对比'; cls='tone-mid'}
+        judgeEl.innerHTML = `<span class="toneTag ${cls}">${tag}</span>`;
+
+        drawHistogram();
+        drawImageFit();
+        updateHandleTips();
+    }
+
+    function drawHistogram(){
+        const W = histCv.width, H = histCv.height; histCtx.clearRect(0,0,W,H);
+        // grid
+        histCtx.fillStyle = '#0b1220'; histCtx.fillRect(0,0,W,H);
+        histCtx.strokeStyle = '#1f2638'; histCtx.lineWidth = 1;
+        for(let i=0;i<=8;i++){const y=Math.round((H-24) * i/8)+12; histCtx.beginPath(); histCtx.moveTo(0,y); histCtx.lineTo(W,y); histCtx.stroke();}
+        // find max
+        let maxV = 1; for(let i=0;i<256;i++) maxV = Math.max(maxV, hist[i]);
+        const bw = W/256;
+
+        if(rgbMode.checked){
+            // Draw R, G, B with alpha stacking
+            histCtx.globalAlpha = 0.9; histCtx.fillStyle = '#ef4444';
+            for(let i=0;i<256;i++){const v=histR[i]/maxV; const h=(H-24)*v; histCtx.fillRect(i*bw, H-12-h, Math.max(1,bw-0.5), h);}
+            histCtx.globalAlpha = 0.7; histCtx.fillStyle = '#22c55e';
+            for(let i=0;i<256;i++){const v=histG[i]/maxV; const h=(H-24)*v; histCtx.fillRect(i*bw, H-12-h, Math.max(1,bw-0.5), h);}
+            histCtx.globalAlpha = 0.7; histCtx.fillStyle = '#60a5fa';
+            for(let i=0;i<256;i++){const v=histB[i]/maxV; const h=(H-24)*v; histCtx.fillRect(i*bw, H-12-h, Math.max(1,bw-0.5), h);}
+            histCtx.globalAlpha = 1;
+        } else {
+            // single luminance bars
+            const grad = histCtx.createLinearGradient(0,0,0,H);
+            grad.addColorStop(0,'#60a5fa');
+            grad.addColorStop(1,'#1d4ed8');
+            histCtx.fillStyle = grad;
+            for(let i=0;i<256;i++){
+                const v=hist[i]/maxV; const h=(H-24)*v;
+                histCtx.fillRect(i*bw, H-12-h, Math.max(1,bw-0.5), h);
+            }
+        }
+
+        // zone shade
+        if(showZones.checked){
+            histCtx.globalAlpha = .10; histCtx.fillStyle = '#94a3b8'; // shadow
+            histCtx.fillRect(0, 0, (tShadow+1)*bw, H);
+            histCtx.fillStyle = '#60a5fa'; histCtx.fillRect((tShadow+1)*bw,0,(tHighlight-tShadow)*bw,H);
+            histCtx.fillStyle = '#fca5a5'; histCtx.fillRect((tHighlight+1)*bw,0,(255-tHighlight)*bw,H);
+            histCtx.globalAlpha = 1;
+        }
+
+        // handles
+        drawHandle(tShadow, '#e5e7eb');
+        drawHandle(tHighlight, '#e5e7eb');
+
+        // 0-255 scale
+        histCtx.fillStyle = '#9aa3b2'; histCtx.font = '12px ui-sans-serif'; histCtx.textAlign='center';
+        for(let i=0;i<=255;i+=64){histCtx.fillText(i.toString(), i*bw, H-2);}
+    }
+
+    function drawHandle(level, color){
+        const W=histCv.width,H=histCv.height, bw=W/256; const x=level*bw;
+        histCtx.save();
+        histCtx.strokeStyle=color; histCtx.lineWidth=2; histCtx.setLineDash([6,4]);
+        histCtx.beginPath(); histCtx.moveTo(Math.round(x)+0.5, 6); histCtx.lineTo(Math.round(x)+0.5, H-14); histCtx.stroke();
+        histCtx.setLineDash([]);
+        // knob
+        histCtx.fillStyle=color; histCtx.beginPath(); histCtx.arc(x, 6, 4.5, 0, Math.PI*2); histCtx.fill();
+        histCtx.restore();
+    }
+
+    function updateHandleTips(){
+        const W=histCv.width, bw=W/256;
+        hTipL.style.left = (histCv.getBoundingClientRect().left + tShadow*bw) + 'px';
+        hTipR.style.left = (histCv.getBoundingClientRect().left + tHighlight*bw) + 'px';
+        const sPct = hist.slice(0, tShadow+1).reduce((a,b)=>a+b,0)/(totalPx||1);
+        const hPct = hist.slice(tHighlight+1).reduce((a,b)=>a+b,0)/(totalPx||1);
+        hTipL.style.display='block'; hTipR.style.display='block';
+        hTipL.textContent = `暗阈 ${tShadow}`;
+        hTipR.textContent = `亮阈 ${tHighlight}`;
+        // position vertically over canvas
+        const top = histCv.getBoundingClientRect().top + window.scrollY;
+        hTipL.style.top = (top + 4) + 'px';
+        hTipR.style.top = (top + 4) + 'px';
+    }
+
+    // ======= Events: load image =======
+    pickBtn.addEventListener('click', ()=> fileInput.click());
+    fileInput.addEventListener('change', (e)=>{
+        if(e.target.files && e.target.files[0]) loadFile(e.target.files[0]);
+    });
+
+    ;['dragenter','dragover','dragleave','drop'].forEach(ev=>{
+        dropArea.addEventListener(ev, e=>{e.preventDefault(); e.stopPropagation();});
+    });
+    ;['dragenter','dragover'].forEach(ev=>{
+        dropArea.addEventListener(ev, ()=> dropArea.classList.add('drag'));
+    });
+    ;['dragleave','drop'].forEach(ev=>{
+        dropArea.addEventListener(ev, ()=> dropArea.classList.remove('drag'));
+    });
+    dropArea.addEventListener('drop', (e)=>{
+        const f = e.dataTransfer.files?.[0]; if(f) loadFile(f);
+    });
+
+    async function loadFile(file){
+        const url = URL.createObjectURL(file);
+        try{
+            imgBitmap = await createImageBitmap(file);
+            naturalW = imgBitmap.width; naturalH = imgBitmap.height;
+            infoEl.textContent = `${file.name} · ${naturalW}×${naturalH}`;
+            computeHistogram(imgBitmap);
+            analyzeAndRender();
+        }catch(err){
+            console.error(err); infoEl.textContent = '加载失败';
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    // ======= Events: histogram dragging =======
+    function levelFromX(clientX){
+        const rect = histCv.getBoundingClientRect();
+        const x = clamp(clientX - rect.left, 0, rect.width);
+        return clamp(Math.round(x * 256 / rect.width), 0, 255);
+    }
+
+    histCv.addEventListener('mousedown', (e)=>{
+        const L = levelFromX(e.clientX);
+        // Decide which handle is closer
+        const dL = Math.abs(L - tShadow);
+        const dR = Math.abs(L - tHighlight);
+        dragging = (dL <= dR) ? 'L' : 'R';
+        if(dragging==='L') tShadow = clamp(L, 0, tHighlight-1);
+        else tHighlight = clamp(L, tShadow+1, 255);
+        analyzeAndRender();
+    });
+
+    window.addEventListener('mousemove', (e)=>{
+        if(!dragging) return;
+        const L = levelFromX(e.clientX);
+        if(dragging==='L') tShadow = clamp(L, 0, tHighlight-1);
+        else tHighlight = clamp(L, tShadow+1, 255);
+        analyzeAndRender();
+    });
+    window.addEventListener('mouseup', ()=> dragging=null);
+
+    // Switches
+    rgbMode.addEventListener('change', analyzeAndRender);
+    showZones.addEventListener('change', analyzeAndRender);
+    clipWarn.addEventListener('change', analyzeAndRender);
+
+    // Initial paint
+    drawImageFit();
+    drawHistogram();
+</script>
+</body>
+</html>
