@@ -25,6 +25,7 @@
     const midPctEl = document.getElementById('midPct');
     const highlightPctEl = document.getElementById('highlightPct');
     const peakCountEl = document.getElementById('peakCount');
+    const paletteEl = document.getElementById('dominantPalette');
 
     const hTipL = document.getElementById('hTipL');
     const hTipR = document.getElementById('hTipR');
@@ -52,6 +53,7 @@
     let hist = new Array(256).fill(0);
     let histR = new Array(256).fill(0), histG = new Array(256).fill(0), histB = new Array(256).fill(0);
     let totalPx = 0;
+    let dominantColors = [];
     let tShadow = 64; let tHighlight = 192; let dragging = null;
 
     function clamp(v,min,max){return Math.min(max,Math.max(min,v));}
@@ -65,6 +67,85 @@
         ctx.setTransform(dpr,0,0,dpr,0,0);
         canvas.style.height = cssH + 'px';
         return {cssW, cssH};
+    }
+
+    const bucketSize = 16;
+    const bucketBits = Math.max(1, Math.floor(Math.log2(bucketSize))); // bucketSize must stay a power of two
+    const bucketCount = bucketSize * bucketSize * bucketSize;
+    const quantCounts = new Uint32Array(bucketCount);
+    const quantSumR = new Float64Array(bucketCount);
+    const quantSumG = new Float64Array(bucketCount);
+    const quantSumB = new Float64Array(bucketCount);
+
+    function quantIndex(r, g, b){
+        const rBucket = r >> bucketBits;
+        const gBucket = g >> bucketBits;
+        const bBucket = b >> bucketBits;
+        return (rBucket << (bucketBits * 2)) | (gBucket << bucketBits) | bBucket;
+    }
+
+    function computeDominantColors(){
+        const buckets = [];
+        for(let i=0;i<bucketCount;i++){
+            const count = quantCounts[i];
+            if(!count) continue;
+            buckets.push({
+                count,
+                sumR: quantSumR[i],
+                sumG: quantSumG[i],
+                sumB: quantSumB[i]
+            });
+        }
+        buckets.sort((a,b)=>b.count-a.count);
+        const merged = [];
+        const limit = Math.min(buckets.length, 512);
+        const threshold = 36;
+        const thresholdSq = threshold * threshold;
+        for(let i=0;i<limit;i++){
+            const bucket = buckets[i];
+            const avgR = bucket.sumR / bucket.count;
+            const avgG = bucket.sumG / bucket.count;
+            const avgB = bucket.sumB / bucket.count;
+            let target = null;
+            for(const candidate of merged){
+                const dr = avgR - candidate.avgR;
+                const dg = avgG - candidate.avgG;
+                const db = avgB - candidate.avgB;
+                if((dr*dr + dg*dg + db*db) <= thresholdSq){
+                    target = candidate;
+                    break;
+                }
+            }
+            if(target){
+                target.count += bucket.count;
+                target.sumR += bucket.sumR;
+                target.sumG += bucket.sumG;
+                target.sumB += bucket.sumB;
+                target.avgR = target.sumR / target.count;
+                target.avgG = target.sumG / target.count;
+                target.avgB = target.sumB / target.count;
+            } else {
+                merged.push({
+                    count: bucket.count,
+                    sumR: bucket.sumR,
+                    sumG: bucket.sumG,
+                    sumB: bucket.sumB,
+                    avgR,
+                    avgG,
+                    avgB
+                });
+            }
+            if(merged.length >= 8 && i > 64) break;
+        }
+        return merged
+            .sort((a,b)=>b.count-a.count)
+            .slice(0,6)
+            .map(entry=>({
+                count: entry.count,
+                r: Math.round(entry.avgR),
+                g: Math.round(entry.avgG),
+                b: Math.round(entry.avgB)
+            }));
     }
 
     async function computeHistogramAsync(img){
@@ -84,6 +165,7 @@
         octx.drawImage(img, 0, 0, off.width, off.height);
         const {data} = octx.getImageData(0,0,off.width,off.height);
         hist.fill(0); histR.fill(0); histG.fill(0); histB.fill(0);
+        quantCounts.fill(0); quantSumR.fill(0); quantSumG.fill(0); quantSumB.fill(0);
         totalPx = off.width * off.height;
         const total = data.length; const chunk = 400000; let i = 0;
         while(i < total){
@@ -92,11 +174,17 @@
                 const r=data[j]|0, g=data[j+1]|0, b=data[j+2]|0;
                 const y = (0.2126*r + 0.7152*g + 0.0722*b) | 0;
                 hist[y]++; histR[r]++; histG[g]++; histB[b]++;
+                const idx = quantIndex(r,g,b);
+                quantCounts[idx]++;
+                quantSumR[idx] += r;
+                quantSumG[idx] += g;
+                quantSumB[idx] += b;
             }
             setBusyProgress(end/total, 'Computing histogram…');
             await new Promise(r=>setTimeout(r,0));
             i = end;
         }
+        dominantColors = computeDominantColors();
     }
 
     function drawImageFit(){
@@ -129,7 +217,7 @@
         else if(sPct>0.35 && mean<105){tag='低调倾向'; cls='tone-low'}
         else {tag='中性/广域对比'; cls='tone-mid'}
         judgeEl.innerHTML = `<span class="toneTag ${cls}">${tag}</span>`;
-        drawHistogram(); drawImageFit(); updateHandleTips();
+        drawHistogram(); drawImageFit(); updateHandleTips(); renderPalette();
     }
 
     function drawHistogram(){
@@ -263,6 +351,35 @@
     rgbMode.addEventListener('change', analyzeAndRender);
     showZones.addEventListener('change', analyzeAndRender);
     clipWarn.addEventListener('change', analyzeAndRender);
+
+    function renderPalette(){
+        if(!paletteEl) return;
+        paletteEl.innerHTML = '';
+        if(!dominantColors.length || !totalPx){
+            const span = document.createElement('span');
+            span.textContent = '—';
+            span.className = 'paletteEmpty';
+            paletteEl.appendChild(span);
+            return;
+        }
+        const fmtHex = (v)=> v.toString(16).padStart(2,'0');
+        dominantColors.forEach(color=>{
+            const {r,g,b,count} = color;
+            const hex = `#${fmtHex(r)}${fmtHex(g)}${fmtHex(b)}`.toUpperCase();
+            const pct = ((count / totalPx) * 100).toFixed(1);
+            const item = document.createElement('div');
+            item.className = 'paletteItem';
+            const swatch = document.createElement('div');
+            swatch.className = 'paletteSwatch';
+            swatch.style.background = `rgb(${r},${g},${b})`;
+            const label = document.createElement('div');
+            label.className = 'paletteLabel';
+            label.innerHTML = `<span>${hex}</span><span>${pct}%</span>`;
+            item.appendChild(swatch);
+            item.appendChild(label);
+            paletteEl.appendChild(item);
+        });
+    }
 
     function relayout(){
         const imgAspect = parseFloat(imgCv.dataset.aspect)||0.65;

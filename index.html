@@ -24,10 +24,16 @@
         .imgPanel header,.histPanel header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #22283a;color:var(--muted)}
         .cwrap{position:relative;padding:16px;}
         canvas{display:block;width:100%;height:auto}
-        .meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:12px;border-top:1px solid #22283a;background:linear-gradient(180deg,#0a0f1a,#0e1422)}
+        .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:12px;border-top:1px solid #22283a;background:linear-gradient(180deg,#0a0f1a,#0e1422)}
         .stat{background:#0a101b;border:1px solid #1f2434;padding:10px;border-radius:10px;min-width:0}
         .stat h4{margin:0 0 8px 0;font-size:12px;color:var(--muted)}
         .stat b{font-size:18px;word-break:break-all}
+        .paletteGrid{display:flex;flex-direction:column;gap:8px;min-height:56px}
+        .paletteItem{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;border:1px solid #1f2536;background:#0b1220}
+        .paletteSwatch{width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.12)}
+        .paletteLabel{display:flex;flex-direction:column;font-size:12px;color:#cbd5f5}
+        .paletteLabel span:last-child{color:#7f8ca8;font-size:11px}
+        .paletteEmpty{color:#3b455c;font-size:12px}
         .legend{display:flex;gap:12px;align-items:center;padding:10px 14px;border-top:1px solid #22283a;color:var(--muted);flex-wrap:wrap}
         .dot{width:10px;height:10px;border-radius:50%}
         .dot.shadow{background:var(--shadow)} .dot.mid{background:var(--mid)} .dot.hi{background:var(--hi)}
@@ -84,6 +90,7 @@
                 <div class="stat"><h4>均值亮度</h4><b id="meanL">—</b></div>
                 <div class="stat"><h4>中位亮度</h4><b id="medianL">—</b></div>
                 <div class="stat"><h4>影调判断</h4><b id="toneJudge">—</b></div>
+                <div class="stat"><h4>主色调</h4><div id="dominantPalette" class="paletteGrid"><span class="paletteEmpty">—</span></div></div>
             </div>
         </div>
 
