@@ -23,16 +23,28 @@
         .imgPanel,.histPanel{flex:1;background:#0f1422;border:1px solid #22283a;border-radius:14px;min-width:0;overflow:hidden}
         .imgPanel header,.histPanel header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #22283a;color:var(--muted)}
         .cwrap{position:relative;padding:16px;}
+        .canvasStack{position:relative;width:100%;}
+        .canvasStack canvas{display:block;width:100%;height:auto;border-radius:12px;border:1px solid #1f2536;background:#0b1220;}
+        .guideCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;mix-blend-mode:screen;}
         canvas{display:block;width:100%;height:auto}
-        .meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:12px;border-top:1px solid #22283a;background:linear-gradient(180deg,#0a0f1a,#0e1422)}
+        .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:12px;border-top:1px solid #22283a;background:linear-gradient(180deg,#0a0f1a,#0e1422)}
         .stat{background:#0a101b;border:1px solid #1f2434;padding:10px;border-radius:10px;min-width:0}
         .stat h4{margin:0 0 8px 0;font-size:12px;color:var(--muted)}
         .stat b{font-size:18px;word-break:break-all}
+        .paletteGrid{display:flex;flex-direction:column;gap:8px;min-height:56px}
+        .paletteItem{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;border:1px solid #1f2536;background:#0b1220}
+        .paletteSwatch{width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.12)}
+        .paletteLabel{display:flex;flex-direction:column;font-size:12px;color:#cbd5f5}
+        .paletteLabel span:last-child{color:#7f8ca8;font-size:11px}
+        .paletteEmpty{color:#3b455c;font-size:12px}
         .legend{display:flex;gap:12px;align-items:center;padding:10px 14px;border-top:1px solid #22283a;color:var(--muted);flex-wrap:wrap}
         .dot{width:10px;height:10px;border-radius:50%}
         .dot.shadow{background:var(--shadow)} .dot.mid{background:var(--mid)} .dot.hi{background:var(--hi)}
         .switch{display:inline-flex;gap:8px;align-items:center;padding:8px 10px;border-radius:10px;border:1px solid #2a3144;background:#0f1422;color:var(--muted);cursor:pointer}
         .switch input{accent-color:var(--acc)}
+        .select{padding:9px 12px;border-radius:10px;border:1px solid #2a3144;background:#0f1422;color:var(--muted);appearance:none;font-size:13px;cursor:pointer;min-width:160px}
+        .select:focus{outline:2px solid rgba(88,166,255,0.45);outline-offset:1px}
+        .select option{background:#0f1422;color:var(--muted)}
         .handleTip{position:absolute;top:4px;transform:translateX(-50%);padding:2px 6px;background:#0b1220;border:1px solid #2a2f42;border-radius:6px;color:#aab3c4;font-size:11px;pointer-events:none}
         .toneTag{font-weight:600;padding:4px 8px;border-radius:8px;border:1px solid #2a3144;display:inline-block}
         .tone-low{color:#a5b4fc;border-color:#475569} .tone-mid{color:#67e8f9;border-color:#164e63} .tone-high{color:#fecaca;border-color:#7f1d1d}
@@ -68,6 +80,19 @@
             <label class="switch"><input type="checkbox" id="rgbMode"> RGB 模式</label>
             <label class="switch"><input type="checkbox" id="showZones" checked> 显示影调分区</label>
             <label class="switch"><input type="checkbox" id="clipWarn" checked> 高光/暗部溢出提示</label>
+            <select id="guideType" class="select">
+                <option value="none">构图辅助线：关闭</option>
+                <option value="thirds">九宫格（三分法）</option>
+                <option value="goldenRatio">黄金比例网格</option>
+                <option value="goldenSpiralTL">黄金螺旋（左上）</option>
+                <option value="goldenSpiralTR">黄金螺旋（右上）</option>
+                <option value="goldenSpiralBR">黄金螺旋（右下）</option>
+                <option value="goldenSpiralBL">黄金螺旋（左下）</option>
+                <option value="diagonal">对角线法</option>
+                <option value="diagonalCross">对角交叉</option>
+                <option value="goldenTriangleLeft">黄金三角（左向）</option>
+                <option value="goldenTriangleRight">黄金三角（右向）</option>
+            </select>
         </div>
     </div>
 
@@ -78,12 +103,16 @@
                 <span id="imgInfo" class="pill">未加载</span>
             </header>
             <div class="cwrap">
-                <canvas id="imgCanvas" data-aspect="0.65" style="background:#0b1220;border-radius:12px;border:1px solid #1f2536"></canvas>
+                <div class="canvasStack">
+                    <canvas id="imgCanvas" data-aspect="0.65"></canvas>
+                    <canvas id="guideCanvas" class="guideCanvas"></canvas>
+                </div>
             </div>
             <div class="meta">
                 <div class="stat"><h4>均值亮度</h4><b id="meanL">—</b></div>
                 <div class="stat"><h4>中位亮度</h4><b id="medianL">—</b></div>
                 <div class="stat"><h4>影调判断</h4><b id="toneJudge">—</b></div>
+                <div class="stat"><h4>主色调</h4><div id="dominantPalette" class="paletteGrid"><span class="paletteEmpty">—</span></div></div>
             </div>
         </div>
 
