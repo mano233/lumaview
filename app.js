@@ -155,124 +155,171 @@
     };
 
     function drawGoldenSpiral(ctx, w, h, corner){
-        if(!ctx) return;
-        let cx = 0, cy = 0, baseAngle = 0;
+        if(!ctx || w <= 0 || h <= 0) return;
+
+        const ratio = w / (h || 1);
+        let rectW, rectH;
+        if(ratio >= phi){
+            rectH = h;
+            rectW = rectH * phi;
+        } else {
+            rectW = w;
+            rectH = rectW / phi;
+        }
+
+        const offset = {x:0, y:0};
         switch(corner){
             case 'TR':
-                cx = w; cy = 0; baseAngle = Math.PI/2; break;
+                offset.x = w - rectW;
+                offset.y = 0;
+                break;
             case 'BR':
-                cx = w; cy = h; baseAngle = Math.PI; break;
+                offset.x = w - rectW;
+                offset.y = h - rectH;
+                break;
             case 'BL':
-                cx = 0; cy = h; baseAngle = -Math.PI/2; break;
+                offset.x = 0;
+                offset.y = h - rectH;
+                break;
             case 'TL':
             default:
-                cx = 0; cy = 0; baseAngle = 0; break;
+                offset.x = 0;
+                offset.y = 0;
+                break;
         }
-        const farthest = Math.max(
-            Math.hypot(0 - cx, 0 - cy),
-            Math.hypot(w - cx, 0 - cy),
-            Math.hypot(w - cx, h - cy),
-            Math.hypot(0 - cx, h - cy)
-        );
-        if(farthest === 0) return;
-        const b = Math.log(phi) / (Math.PI/2);
-        let r0 = Math.min(w, h) * 0.04;
-        if(r0 <= 0) return;
-        if(r0 >= farthest) r0 = farthest * 0.25;
-        const thetaEnd = Math.log(farthest / r0) / b;
-        const steps = 240;
+
+        ctx.save();
+        ctx.translate(offset.x, offset.y);
+        switch(corner){
+            case 'TR':
+                ctx.translate(rectW, 0);
+                ctx.scale(-1, 1);
+                break;
+            case 'BR':
+                ctx.translate(rectW, rectH);
+                ctx.scale(-1, -1);
+                break;
+            case 'BL':
+                ctx.translate(0, rectH);
+                ctx.scale(1, -1);
+                break;
+            default:
+                break;
+        }
+
+        drawCanonicalGoldenSpiral(ctx, rectW, rectH);
+        ctx.restore();
+    }
+
+    function drawCanonicalGoldenSpiral(ctx, width, height){
+        const squares = generateGoldenSquares(width, height, 14);
+        if(!squares.length) return;
+        const maxDim = Math.max(width, height) || 1;
         ctx.beginPath();
-        for(let i=0;i<=steps;i++){
-            const t = i/steps;
-            const theta = thetaEnd * t;
-            const radius = r0 * Math.exp(b * theta);
-            const angle = baseAngle + theta;
-            const px = cx + radius * Math.cos(angle);
-            const py = cy + radius * Math.sin(angle);
-            if(i===0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
+        let moved = false;
+        for(const square of squares){
+            const pts = sampleGoldenArc(square, maxDim);
+            for(const pt of pts){
+                if(!moved){
+                    ctx.moveTo(pt.x, pt.y);
+                    moved = true;
+                } else {
+                    ctx.lineTo(pt.x, pt.y);
+                }
+            }
         }
         ctx.stroke();
     }
 
-    function quantIndex(r, g, b){
-        const rBucket = r >> bucketBits;
-        const gBucket = g >> bucketBits;
-        const bBucket = b >> bucketBits;
-        return (rBucket << (bucketBits * 2)) | (gBucket << bucketBits) | bBucket;
-    }
-
-    function computeDominantColors(){
-        const buckets = [];
-        for(let i=0;i<bucketCount;i++){
-            const count = quantCounts[i];
-            if(!count) continue;
-            buckets.push({
-                count,
-                sumR: quantSumR[i],
-                sumG: quantSumG[i],
-                sumB: quantSumB[i]
-            });
-        }
-        buckets.sort((a,b)=>b.count-a.count);
-        const merged = [];
-        const limit = Math.min(buckets.length, 512);
-        const threshold = 36;
-        const thresholdSq = threshold * threshold;
-        for(let i=0;i<limit;i++){
-            const bucket = buckets[i];
-            const avgR = bucket.sumR / bucket.count;
-            const avgG = bucket.sumG / bucket.count;
-            const avgB = bucket.sumB / bucket.count;
-            let target = null;
-            for(const candidate of merged){
-                const dr = avgR - candidate.avgR;
-                const dg = avgG - candidate.avgG;
-                const db = avgB - candidate.avgB;
-                if((dr*dr + dg*dg + db*db) <= thresholdSq){
-                    target = candidate;
+    function generateGoldenSquares(width, height, depth){
+        const squares = [];
+        let x = 0, y = 0, w = width, h = height;
+        let dir = 0;
+        for(let i=0;i<depth;i++){
+            if(w <= 1e-6 || h <= 1e-6) break;
+            const horizontal = (dir % 2 === 0);
+            const size = horizontal ? h : w;
+            if(size <= 1e-6) break;
+            let squareX = x, squareY = y;
+            switch(dir % 4){
+                case 0:
+                    squareX = x;
+                    squareY = y;
+                    x += size;
+                    w = Math.max(0, w - size);
+                    break;
+                case 1:
+                    squareX = x;
+                    squareY = y;
+                    y += size;
+                    h = Math.max(0, h - size);
+                    break;
+                case 2: {
+                    const offsetW = Math.max(0, w - size);
+                    const offsetH = Math.max(0, h - size);
+                    squareX = x + offsetW;
+                    squareY = y + offsetH;
+                    w = offsetW;
+                    break;
+                }
+                case 3:
+                default: {
+                    const offsetW = Math.max(0, w - size);
+                    const offsetH = Math.max(0, h - size);
+                    squareX = x + offsetW;
+                    squareY = y + offsetH;
+                    h = offsetH;
                     break;
                 }
             }
-            if(target){
-                target.count += bucket.count;
-                target.sumR += bucket.sumR;
-                target.sumG += bucket.sumG;
-                target.sumB += bucket.sumB;
-                target.avgR = target.sumR / target.count;
-                target.avgG = target.sumG / target.count;
-                target.avgB = target.sumB / target.count;
-            } else {
-                merged.push({
-                    count: bucket.count,
-                    sumR: bucket.sumR,
-                    sumG: bucket.sumG,
-                    sumB: bucket.sumB,
-                    avgR,
-                    avgG,
-                    avgB
-                });
-            }
-            if(merged.length >= 8 && i > 64) break;
+            squares.push({x: squareX, y: squareY, size, dir: dir % 4});
+            dir = (dir + 1) % 4;
         }
-        return merged
-            .sort((a,b)=>b.count-a.count)
-            .slice(0,6)
-            .map(entry=>({
-                count: entry.count,
-                r: Math.round(entry.avgR),
-                g: Math.round(entry.avgG),
-                b: Math.round(entry.avgB)
-            }));
+        return squares;
     }
 
-    const bucketSize = 16;
-    const bucketBits = Math.max(1, Math.floor(Math.log2(bucketSize))); // bucketSize must stay a power of two
-    const bucketCount = bucketSize * bucketSize * bucketSize;
-    const quantCounts = new Uint32Array(bucketCount);
-    const quantSumR = new Float64Array(bucketCount);
-    const quantSumG = new Float64Array(bucketCount);
-    const quantSumB = new Float64Array(bucketCount);
+    function sampleGoldenArc(square, maxDim){
+        const {x, y, size, dir} = square;
+        const steps = Math.max(18, Math.round((size / maxDim) * 96));
+        let cx = 0, cy = 0, start = 0, end = 0;
+        switch(dir){
+            case 0:
+                cx = x;
+                cy = y;
+                start = Math.PI / 2;
+                end = 0;
+                break;
+            case 1:
+                cx = x + size;
+                cy = y;
+                start = Math.PI;
+                end = Math.PI / 2;
+                break;
+            case 2:
+                cx = x + size;
+                cy = y + size;
+                start = 1.5 * Math.PI;
+                end = Math.PI;
+                break;
+            case 3:
+            default:
+                cx = x;
+                cy = y + size;
+                start = 0;
+                end = -Math.PI / 2;
+                break;
+        }
+        const points = [];
+        for(let i=0;i<=steps;i++){
+            const t = i / steps;
+            const angle = start + (end - start) * t;
+            points.push({
+                x: cx + size * Math.cos(angle),
+                y: cy + size * Math.sin(angle)
+            });
+        }
+        return points;
+    }
 
     function quantIndex(r, g, b){
         const rBucket = r >> bucketBits;
@@ -589,35 +636,6 @@
     showZones.addEventListener('change', analyzeAndRender);
     clipWarn.addEventListener('change', analyzeAndRender);
     if(guideSelect) guideSelect.addEventListener('change', renderCompositionGuides);
-
-    function renderPalette(){
-        if(!paletteEl) return;
-        paletteEl.innerHTML = '';
-        if(!dominantColors.length || !totalPx){
-            const span = document.createElement('span');
-            span.textContent = '—';
-            span.className = 'paletteEmpty';
-            paletteEl.appendChild(span);
-            return;
-        }
-        const fmtHex = (v)=> v.toString(16).padStart(2,'0');
-        dominantColors.forEach(color=>{
-            const {r,g,b,count} = color;
-            const hex = `#${fmtHex(r)}${fmtHex(g)}${fmtHex(b)}`.toUpperCase();
-            const pct = ((count / totalPx) * 100).toFixed(1);
-            const item = document.createElement('div');
-            item.className = 'paletteItem';
-            const swatch = document.createElement('div');
-            swatch.className = 'paletteSwatch';
-            swatch.style.background = `rgb(${r},${g},${b})`;
-            const label = document.createElement('div');
-            label.className = 'paletteLabel';
-            label.innerHTML = `<span>${hex}</span><span>${pct}%</span>`;
-            item.appendChild(swatch);
-            item.appendChild(label);
-            paletteEl.appendChild(item);
-        });
-    }
 
     function renderPalette(){
         if(!paletteEl) return;
