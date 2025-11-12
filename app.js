@@ -13,8 +13,10 @@
     const dropArea = document.getElementById('dropArea');
     const imgCv = document.getElementById('imgCanvas');
     const histCv = document.getElementById('histCanvas');
+    const guideCv = document.getElementById('guideCanvas');
     const imgCtx = imgCv.getContext('2d');
     const histCtx = histCv.getContext('2d');
+    const guideCtx = guideCv ? guideCv.getContext('2d') : null;
     const imgPanelEl = document.querySelector('.imgPanel');
 
     const infoEl = document.getElementById('imgInfo');
@@ -33,6 +35,7 @@
     const rgbMode = document.getElementById('rgbMode');
     const showZones = document.getElementById('showZones');
     const clipWarn = document.getElementById('clipWarn');
+    const guideSelect = document.getElementById('guideType');
 
     const busy = document.getElementById('busy');
     const busyTitle = document.getElementById('busyTitle');
@@ -54,6 +57,7 @@
     let histR = new Array(256).fill(0), histG = new Array(256).fill(0), histB = new Array(256).fill(0);
     let totalPx = 0;
     let dominantColors = [];
+    let imgDrawRect = {x:0,y:0,w:0,h:0};
     let tShadow = 64; let tHighlight = 192; let dragging = null;
 
     function clamp(v,min,max){return Math.min(max,Math.max(min,v));}
@@ -63,10 +67,203 @@
         const cssW = Math.max(100, Math.floor(canvas.clientWidth));
         const cssH = Math.max(80, Math.floor(cssW * aspect));
         const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
-        canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr);
+        const pixelW = Math.round(cssW * dpr);
+        const pixelH = Math.round(cssH * dpr);
+        canvas.width = pixelW; canvas.height = pixelH;
         ctx.setTransform(dpr,0,0,dpr,0,0);
         canvas.style.height = cssH + 'px';
-        return {cssW, cssH};
+        return {cssW, cssH, dpr, pixelW, pixelH};
+    }
+
+    function syncGuideCanvasSize(baseSize){
+        if(!guideCv || !guideCtx) return;
+        const cssW = baseSize?.cssW ?? (imgCv.clientWidth||0);
+        const cssH = baseSize?.cssH ?? (imgCv.clientHeight||0);
+        const dpr = baseSize?.dpr ?? Math.max(1, Math.floor(window.devicePixelRatio || 1));
+        const pixelW = Math.round(cssW * dpr);
+        const pixelH = Math.round(cssH * dpr);
+        guideCv.width = pixelW;
+        guideCv.height = pixelH;
+        guideCtx.setTransform(dpr,0,0,dpr,0,0);
+    }
+
+    const bucketSize = 16;
+    const bucketBits = Math.max(1, Math.floor(Math.log2(bucketSize))); // bucketSize must stay a power of two
+    const bucketCount = bucketSize * bucketSize * bucketSize;
+    const quantCounts = new Uint32Array(bucketCount);
+    const quantSumR = new Float64Array(bucketCount);
+    const quantSumG = new Float64Array(bucketCount);
+    const quantSumB = new Float64Array(bucketCount);
+
+    const phi = (Math.sqrt(5)+1)/2;
+    const invPhi = 1/phi;
+
+    const guideDrawers = {
+        thirds(ctx, w, h) {
+            const x1 = w / 3;
+            const x2 = (2 * w) / 3;
+            const y1 = h / 3;
+            const y2 = (2 * h) / 3;
+            ctx.beginPath();
+            ctx.moveTo(x1, 0); ctx.lineTo(x1, h);
+            ctx.moveTo(x2, 0); ctx.lineTo(x2, h);
+            ctx.moveTo(0, y1); ctx.lineTo(w, y1);
+            ctx.moveTo(0, y2); ctx.lineTo(w, y2);
+            ctx.stroke();
+        },
+        goldenRatio(ctx, w, h) {
+            const xMajor = w * invPhi;
+            const xMinor = w * (1 - invPhi);
+            const yMajor = h * invPhi;
+            const yMinor = h * (1 - invPhi);
+            ctx.beginPath();
+            ctx.moveTo(xMajor, 0); ctx.lineTo(xMajor, h);
+            ctx.moveTo(xMinor, 0); ctx.lineTo(xMinor, h);
+            ctx.moveTo(0, yMajor); ctx.lineTo(w, yMajor);
+            ctx.moveTo(0, yMinor); ctx.lineTo(w, yMinor);
+            ctx.stroke();
+        },
+        goldenSpiralTL(ctx, w, h) { drawGoldenSpiral(ctx, w, h, 'TL'); },
+        goldenSpiralTR(ctx, w, h) { drawGoldenSpiral(ctx, w, h, 'TR'); },
+        goldenSpiralBR(ctx, w, h) { drawGoldenSpiral(ctx, w, h, 'BR'); },
+        goldenSpiralBL(ctx, w, h) { drawGoldenSpiral(ctx, w, h, 'BL'); },
+        diagonal(ctx, w, h) {
+            ctx.beginPath();
+            ctx.moveTo(0, h); ctx.lineTo(w, 0);
+            ctx.moveTo(0, 0); ctx.lineTo(w * 0.5, h);
+            ctx.moveTo(w, h); ctx.lineTo(w * 0.5, 0);
+            ctx.stroke();
+        },
+        diagonalCross(ctx, w, h) {
+            ctx.beginPath();
+            ctx.moveTo(0, 0); ctx.lineTo(w, h);
+            ctx.moveTo(0, h); ctx.lineTo(w, 0);
+            ctx.stroke();
+        },
+        goldenTriangleLeft(ctx, w, h) {
+            ctx.beginPath();
+            ctx.moveTo(0, 0); ctx.lineTo(w, h);
+            ctx.moveTo(0, 0); ctx.lineTo(w * invPhi, h);
+            ctx.stroke();
+        },
+        goldenTriangleRight(ctx, w, h) {
+            ctx.beginPath();
+            ctx.moveTo(w, 0); ctx.lineTo(0, h);
+            ctx.moveTo(w, 0); ctx.lineTo(w * (1 - invPhi), h);
+            ctx.stroke();
+        }
+    };
+
+    function drawGoldenSpiral(ctx, w, h, corner){
+        if(!ctx) return;
+        let cx = 0, cy = 0, baseAngle = 0;
+        switch(corner){
+            case 'TR':
+                cx = w; cy = 0; baseAngle = Math.PI/2; break;
+            case 'BR':
+                cx = w; cy = h; baseAngle = Math.PI; break;
+            case 'BL':
+                cx = 0; cy = h; baseAngle = -Math.PI/2; break;
+            case 'TL':
+            default:
+                cx = 0; cy = 0; baseAngle = 0; break;
+        }
+        const farthest = Math.max(
+            Math.hypot(0 - cx, 0 - cy),
+            Math.hypot(w - cx, 0 - cy),
+            Math.hypot(w - cx, h - cy),
+            Math.hypot(0 - cx, h - cy)
+        );
+        if(farthest === 0) return;
+        const b = Math.log(phi) / (Math.PI/2);
+        let r0 = Math.min(w, h) * 0.04;
+        if(r0 <= 0) return;
+        if(r0 >= farthest) r0 = farthest * 0.25;
+        const thetaEnd = Math.log(farthest / r0) / b;
+        const steps = 240;
+        ctx.beginPath();
+        for(let i=0;i<=steps;i++){
+            const t = i/steps;
+            const theta = thetaEnd * t;
+            const radius = r0 * Math.exp(b * theta);
+            const angle = baseAngle + theta;
+            const px = cx + radius * Math.cos(angle);
+            const py = cy + radius * Math.sin(angle);
+            if(i===0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+    }
+
+    function quantIndex(r, g, b){
+        const rBucket = r >> bucketBits;
+        const gBucket = g >> bucketBits;
+        const bBucket = b >> bucketBits;
+        return (rBucket << (bucketBits * 2)) | (gBucket << bucketBits) | bBucket;
+    }
+
+    function computeDominantColors(){
+        const buckets = [];
+        for(let i=0;i<bucketCount;i++){
+            const count = quantCounts[i];
+            if(!count) continue;
+            buckets.push({
+                count,
+                sumR: quantSumR[i],
+                sumG: quantSumG[i],
+                sumB: quantSumB[i]
+            });
+        }
+        buckets.sort((a,b)=>b.count-a.count);
+        const merged = [];
+        const limit = Math.min(buckets.length, 512);
+        const threshold = 36;
+        const thresholdSq = threshold * threshold;
+        for(let i=0;i<limit;i++){
+            const bucket = buckets[i];
+            const avgR = bucket.sumR / bucket.count;
+            const avgG = bucket.sumG / bucket.count;
+            const avgB = bucket.sumB / bucket.count;
+            let target = null;
+            for(const candidate of merged){
+                const dr = avgR - candidate.avgR;
+                const dg = avgG - candidate.avgG;
+                const db = avgB - candidate.avgB;
+                if((dr*dr + dg*dg + db*db) <= thresholdSq){
+                    target = candidate;
+                    break;
+                }
+            }
+            if(target){
+                target.count += bucket.count;
+                target.sumR += bucket.sumR;
+                target.sumG += bucket.sumG;
+                target.sumB += bucket.sumB;
+                target.avgR = target.sumR / target.count;
+                target.avgG = target.sumG / target.count;
+                target.avgB = target.sumB / target.count;
+            } else {
+                merged.push({
+                    count: bucket.count,
+                    sumR: bucket.sumR,
+                    sumG: bucket.sumG,
+                    sumB: bucket.sumB,
+                    avgR,
+                    avgG,
+                    avgB
+                });
+            }
+            if(merged.length >= 8 && i > 64) break;
+        }
+        return merged
+            .sort((a,b)=>b.count-a.count)
+            .slice(0,6)
+            .map(entry=>({
+                count: entry.count,
+                r: Math.round(entry.avgR),
+                g: Math.round(entry.avgG),
+                b: Math.round(entry.avgB)
+            }));
     }
 
     const bucketSize = 16;
@@ -188,13 +385,53 @@
     }
 
     function drawImageFit(){
-        const cw=imgCv.clientWidth||0,ch=imgCv.clientHeight||0; imgCtx.clearRect(0,0,cw,ch);
-        if(!imgBitmap) return;
+        const cw = imgCv.clientWidth || 0;
+        const ch = imgCv.clientHeight || 0;
+        imgCtx.clearRect(0,0,cw,ch);
+        imgCtx.fillStyle = '#0b1220';
+        imgCtx.fillRect(0,0,cw,ch);
+        if(!imgBitmap){
+            imgDrawRect = {x:0,y:0,w:0,h:0};
+            renderCompositionGuides();
+            return;
+        }
         const scale = Math.min(cw / naturalW, ch / naturalH);
-        const dw = Math.round(naturalW * scale), dh = Math.round(naturalH * scale);
-        const dx = Math.round((cw-dw)/2), dy = Math.round((ch-dh)/2);
-        imgCtx.fillStyle = '#0b1220'; imgCtx.fillRect(0,0,cw,ch);
+        if(!isFinite(scale) || scale <= 0){
+            imgDrawRect = {x:0,y:0,w:0,h:0};
+            renderCompositionGuides();
+            return;
+        }
+        const dw = Math.round(naturalW * scale);
+        const dh = Math.round(naturalH * scale);
+        const dx = Math.round((cw - dw) / 2);
+        const dy = Math.round((ch - dh) / 2);
         imgCtx.drawImage(imgBitmap, dx, dy, dw, dh);
+        imgDrawRect = {x:dx, y:dy, w:dw, h:dh};
+        renderCompositionGuides();
+    }
+
+    function renderCompositionGuides(){
+        if(!guideCtx || !guideCv) return;
+        const cw = guideCv.clientWidth || imgCv.clientWidth || 0;
+        const ch = guideCv.clientHeight || imgCv.clientHeight || 0;
+        guideCtx.clearRect(0,0,cw,ch);
+        if(!imgBitmap || !guideSelect || guideSelect.value === 'none') return;
+        const rect = imgDrawRect;
+        if(!rect || rect.w <= 0 || rect.h <= 0) return;
+        const drawer = guideDrawers[guideSelect.value];
+        if(!drawer) return;
+        guideCtx.save();
+        guideCtx.translate(rect.x, rect.y);
+        guideCtx.beginPath();
+        guideCtx.rect(0,0,rect.w,rect.h);
+        guideCtx.clip();
+        guideCtx.lineWidth = Math.max(1.2, Math.min(rect.w, rect.h) / 480 * 2.6);
+        guideCtx.lineCap = 'round';
+        guideCtx.lineJoin = 'round';
+        guideCtx.setLineDash([]);
+        guideCtx.strokeStyle = 'rgba(88,166,255,0.85)';
+        drawer(guideCtx, rect.w, rect.h);
+        guideCtx.restore();
     }
 
     function analyzeAndRender(){
@@ -351,6 +588,36 @@
     rgbMode.addEventListener('change', analyzeAndRender);
     showZones.addEventListener('change', analyzeAndRender);
     clipWarn.addEventListener('change', analyzeAndRender);
+    if(guideSelect) guideSelect.addEventListener('change', renderCompositionGuides);
+
+    function renderPalette(){
+        if(!paletteEl) return;
+        paletteEl.innerHTML = '';
+        if(!dominantColors.length || !totalPx){
+            const span = document.createElement('span');
+            span.textContent = '—';
+            span.className = 'paletteEmpty';
+            paletteEl.appendChild(span);
+            return;
+        }
+        const fmtHex = (v)=> v.toString(16).padStart(2,'0');
+        dominantColors.forEach(color=>{
+            const {r,g,b,count} = color;
+            const hex = `#${fmtHex(r)}${fmtHex(g)}${fmtHex(b)}`.toUpperCase();
+            const pct = ((count / totalPx) * 100).toFixed(1);
+            const item = document.createElement('div');
+            item.className = 'paletteItem';
+            const swatch = document.createElement('div');
+            swatch.className = 'paletteSwatch';
+            swatch.style.background = `rgb(${r},${g},${b})`;
+            const label = document.createElement('div');
+            label.className = 'paletteLabel';
+            label.innerHTML = `<span>${hex}</span><span>${pct}%</span>`;
+            item.appendChild(swatch);
+            item.appendChild(label);
+            paletteEl.appendChild(item);
+        });
+    }
 
     function renderPalette(){
         if(!paletteEl) return;
@@ -384,7 +651,8 @@
     function relayout(){
         const imgAspect = parseFloat(imgCv.dataset.aspect)||0.65;
         const histAspect = parseFloat(histCv.dataset.aspect)||0.325;
-        resizeCanvasToDisplaySize(imgCv, imgCtx, imgAspect);
+        const imgSize = resizeCanvasToDisplaySize(imgCv, imgCtx, imgAspect);
+        syncGuideCanvasSize(imgSize);
         resizeCanvasToDisplaySize(histCv, histCtx, histAspect);
         analyzeAndRender();
     }
