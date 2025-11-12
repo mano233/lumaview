@@ -212,119 +212,110 @@
     }
 
     function drawCanonicalGoldenSpiral(ctx, width, height){
-        const squares = [];
-        const maxDepth = 12;
-
-        function subdivide(x, y, w, h, dir, depth){
-            if(depth === 0 || w <= 0 || h <= 0) return;
-            if(w >= h){
-                const size = h;
-                if(size <= 0) return;
-                if(dir === 0){
-                    const squareX = x + (w - size);
-                    const squareY = y;
-                    squares.push({x: squareX, y: squareY, size, dir});
-                    subdivide(x, y, size, w - size, (dir + 3) % 4, depth - 1);
-                } else if(dir === 1){
-                    const squareX = x;
-                    const squareY = y;
-                    squares.push({x: squareX, y: squareY, size, dir});
-                    subdivide(x + size, y, w - size, size, (dir + 3) % 4, depth - 1);
-                } else if(dir === 2){
-                    const squareX = x;
-                    const squareY = y;
-                    squares.push({x: squareX, y: squareY, size, dir});
-                    subdivide(x + size, y, size, w - size, (dir + 3) % 4, depth - 1);
-                } else {
-                    const squareX = x + (w - size);
-                    const squareY = y + (h - size);
-                    squares.push({x: squareX, y: squareY, size, dir});
-                    subdivide(x, y, w - size, size, (dir + 3) % 4, depth - 1);
-                }
-            } else {
-                const size = w;
-                if(size <= 0) return;
-                if(dir === 0){
-                    const squareX = x + (w - size);
-                    const squareY = y + (h - size);
-                    squares.push({x: squareX, y: squareY, size, dir});
-                    subdivide(x, y, size, h - size, (dir + 3) % 4, depth - 1);
-                } else if(dir === 1){
-                    const squareX = x + (w - size);
-                    const squareY = y;
-                    squares.push({x: squareX, y: squareY, size, dir});
-                    subdivide(x, y + size, w - size, size, (dir + 3) % 4, depth - 1);
-                } else if(dir === 2){
-                    const squareX = x;
-                    const squareY = y;
-                    squares.push({x: squareX, y: squareY, size, dir});
-                    subdivide(x, y + size, size, h - size, (dir + 3) % 4, depth - 1);
-                } else {
-                    const squareX = x;
-                    const squareY = y + (h - size);
-                    squares.push({x: squareX, y: squareY, size, dir});
-                    subdivide(x + size, y, w - size, size, (dir + 3) % 4, depth - 1);
-                }
-            }
-        }
-
-        subdivide(0, 0, width, height, 0, maxDepth);
+        const squares = generateGoldenSquares(width, height, 14);
         if(!squares.length) return;
-
+        const maxDim = Math.max(width, height) || 1;
         ctx.beginPath();
-        let isFirst = true;
+        let moved = false;
         for(const square of squares){
-            const pts = goldenArcPoints(square);
-            for(let i=0;i<pts.length;i++){
-                const {x, y} = pts[i];
-                if(isFirst){
-                    ctx.moveTo(x, y);
-                    isFirst = false;
+            const pts = sampleGoldenArc(square, maxDim);
+            for(const pt of pts){
+                if(!moved){
+                    ctx.moveTo(pt.x, pt.y);
+                    moved = true;
                 } else {
-                    ctx.lineTo(x, y);
+                    ctx.lineTo(pt.x, pt.y);
                 }
             }
         }
         ctx.stroke();
     }
 
-    function goldenArcPoints(square){
-        const steps = 48;
+    function generateGoldenSquares(width, height, depth){
+        const squares = [];
+        let x = 0, y = 0, w = width, h = height;
+        let dir = 0;
+        for(let i=0;i<depth;i++){
+            if(w <= 1e-6 || h <= 1e-6) break;
+            const horizontal = (dir % 2 === 0);
+            const size = horizontal ? h : w;
+            if(size <= 1e-6) break;
+            let squareX = x, squareY = y;
+            switch(dir % 4){
+                case 0:
+                    squareX = x;
+                    squareY = y;
+                    x += size;
+                    w = Math.max(0, w - size);
+                    break;
+                case 1:
+                    squareX = x;
+                    squareY = y;
+                    y += size;
+                    h = Math.max(0, h - size);
+                    break;
+                case 2: {
+                    const offsetW = Math.max(0, w - size);
+                    const offsetH = Math.max(0, h - size);
+                    squareX = x + offsetW;
+                    squareY = y + offsetH;
+                    w = offsetW;
+                    break;
+                }
+                case 3:
+                default: {
+                    const offsetW = Math.max(0, w - size);
+                    const offsetH = Math.max(0, h - size);
+                    squareX = x + offsetW;
+                    squareY = y + offsetH;
+                    h = offsetH;
+                    break;
+                }
+            }
+            squares.push({x: squareX, y: squareY, size, dir: dir % 4});
+            dir = (dir + 1) % 4;
+        }
+        return squares;
+    }
+
+    function sampleGoldenArc(square, maxDim){
         const {x, y, size, dir} = square;
-        const points = [];
+        const steps = Math.max(18, Math.round((size / maxDim) * 96));
         let cx = 0, cy = 0, start = 0, end = 0;
         switch(dir){
             case 0:
                 cx = x;
-                cy = y + size;
-                start = 0;
-                end = Math.PI/2;
+                cy = y;
+                start = Math.PI / 2;
+                end = 0;
                 break;
             case 1:
                 cx = x + size;
-                cy = y + size;
-                start = Math.PI/2;
-                end = Math.PI;
+                cy = y;
+                start = Math.PI;
+                end = Math.PI / 2;
                 break;
             case 2:
                 cx = x + size;
-                cy = y;
-                start = Math.PI;
-                end = 1.5 * Math.PI;
+                cy = y + size;
+                start = 1.5 * Math.PI;
+                end = Math.PI;
                 break;
             case 3:
             default:
                 cx = x;
-                cy = y;
-                start = 1.5 * Math.PI;
-                end = 2 * Math.PI;
+                cy = y + size;
+                start = 0;
+                end = -Math.PI / 2;
                 break;
         }
+        const points = [];
         for(let i=0;i<=steps;i++){
-            const t = start + (end - start) * (i/steps);
+            const t = i / steps;
+            const angle = start + (end - start) * t;
             points.push({
-                x: cx + size * Math.cos(t),
-                y: cy + size * Math.sin(t)
+                x: cx + size * Math.cos(angle),
+                y: cy + size * Math.sin(angle)
             });
         }
         return points;
