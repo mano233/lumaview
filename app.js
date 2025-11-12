@@ -266,6 +266,85 @@
             }));
     }
 
+    const bucketSize = 16;
+    const bucketBits = Math.max(1, Math.floor(Math.log2(bucketSize))); // bucketSize must stay a power of two
+    const bucketCount = bucketSize * bucketSize * bucketSize;
+    const quantCounts = new Uint32Array(bucketCount);
+    const quantSumR = new Float64Array(bucketCount);
+    const quantSumG = new Float64Array(bucketCount);
+    const quantSumB = new Float64Array(bucketCount);
+
+    function quantIndex(r, g, b){
+        const rBucket = r >> bucketBits;
+        const gBucket = g >> bucketBits;
+        const bBucket = b >> bucketBits;
+        return (rBucket << (bucketBits * 2)) | (gBucket << bucketBits) | bBucket;
+    }
+
+    function computeDominantColors(){
+        const buckets = [];
+        for(let i=0;i<bucketCount;i++){
+            const count = quantCounts[i];
+            if(!count) continue;
+            buckets.push({
+                count,
+                sumR: quantSumR[i],
+                sumG: quantSumG[i],
+                sumB: quantSumB[i]
+            });
+        }
+        buckets.sort((a,b)=>b.count-a.count);
+        const merged = [];
+        const limit = Math.min(buckets.length, 512);
+        const threshold = 36;
+        const thresholdSq = threshold * threshold;
+        for(let i=0;i<limit;i++){
+            const bucket = buckets[i];
+            const avgR = bucket.sumR / bucket.count;
+            const avgG = bucket.sumG / bucket.count;
+            const avgB = bucket.sumB / bucket.count;
+            let target = null;
+            for(const candidate of merged){
+                const dr = avgR - candidate.avgR;
+                const dg = avgG - candidate.avgG;
+                const db = avgB - candidate.avgB;
+                if((dr*dr + dg*dg + db*db) <= thresholdSq){
+                    target = candidate;
+                    break;
+                }
+            }
+            if(target){
+                target.count += bucket.count;
+                target.sumR += bucket.sumR;
+                target.sumG += bucket.sumG;
+                target.sumB += bucket.sumB;
+                target.avgR = target.sumR / target.count;
+                target.avgG = target.sumG / target.count;
+                target.avgB = target.sumB / target.count;
+            } else {
+                merged.push({
+                    count: bucket.count,
+                    sumR: bucket.sumR,
+                    sumG: bucket.sumG,
+                    sumB: bucket.sumB,
+                    avgR,
+                    avgG,
+                    avgB
+                });
+            }
+            if(merged.length >= 8 && i > 64) break;
+        }
+        return merged
+            .sort((a,b)=>b.count-a.count)
+            .slice(0,6)
+            .map(entry=>({
+                count: entry.count,
+                r: Math.round(entry.avgR),
+                g: Math.round(entry.avgG),
+                b: Math.round(entry.avgB)
+            }));
+    }
+
     async function computeHistogramAsync(img){
         const maxSide = 1400; let w = img.width, h = img.height;
         const scale = Math.min(1, maxSide / Math.max(w,h));
@@ -510,6 +589,35 @@
     showZones.addEventListener('change', analyzeAndRender);
     clipWarn.addEventListener('change', analyzeAndRender);
     if(guideSelect) guideSelect.addEventListener('change', renderCompositionGuides);
+
+    function renderPalette(){
+        if(!paletteEl) return;
+        paletteEl.innerHTML = '';
+        if(!dominantColors.length || !totalPx){
+            const span = document.createElement('span');
+            span.textContent = '—';
+            span.className = 'paletteEmpty';
+            paletteEl.appendChild(span);
+            return;
+        }
+        const fmtHex = (v)=> v.toString(16).padStart(2,'0');
+        dominantColors.forEach(color=>{
+            const {r,g,b,count} = color;
+            const hex = `#${fmtHex(r)}${fmtHex(g)}${fmtHex(b)}`.toUpperCase();
+            const pct = ((count / totalPx) * 100).toFixed(1);
+            const item = document.createElement('div');
+            item.className = 'paletteItem';
+            const swatch = document.createElement('div');
+            swatch.className = 'paletteSwatch';
+            swatch.style.background = `rgb(${r},${g},${b})`;
+            const label = document.createElement('div');
+            label.className = 'paletteLabel';
+            label.innerHTML = `<span>${hex}</span><span>${pct}%</span>`;
+            item.appendChild(swatch);
+            item.appendChild(label);
+            paletteEl.appendChild(item);
+        });
+    }
 
     function renderPalette(){
         if(!paletteEl) return;
